@@ -1,4 +1,8 @@
 KDIR ?= /lib/modules/$(shell uname -r)/build
+# Follow the target kernel compiler, including when DKMS builds another kernel.
+ifneq ($(shell grep -l "^CONFIG_CC_IS_CLANG=y" $(KDIR)/.config 2>/dev/null),)
+export LLVM := 1
+endif
 DESTDIR ?=
 PREFIX ?= /usr/local
 MODDIR ?= /lib/modules/$(shell uname -r)/updates/xps7390-webcam
