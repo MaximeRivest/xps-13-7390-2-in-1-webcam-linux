@@ -24,8 +24,17 @@ if [[ -z "$media" ]]; then
   exit 1
 fi
 
+# The entity is named after the sensor's I2C bus and address, e.g.
+# "ov01a10 3-0036" or "ov01a10 2-0036"; the bus number depends on
+# enumeration order, so read the name from the media graph.
+sensor=$(media-ctl -d "$media" -p | sed -nE 's/.*entity [0-9]+: (ov01a10[^ ]* [^ ]+) \(.*/\1/p')
+if [[ -z "$sensor" || "$sensor" == *$'\n'* ]]; then
+  echo "Expected exactly one OV01A10 sensor in $media." >&2
+  exit 1
+fi
+
 format=SBGGR10_1X10/1280x800
-media-ctl -d "$media" -V '"ov01a10 3-0036":0 [fmt:'"$format"']'
+media-ctl -d "$media" -V "\"$sensor\":0 [fmt:$format]"
 media-ctl -d "$media" -V '"Intel IPU4P CSI2 1":0 [fmt:'"$format"']'
 media-ctl -d "$media" -V '"Intel IPU4P CSI2 1":1 [fmt:'"$format"']'
 media-ctl -d "$media" -l '"Intel IPU4P CSI2 1":1 -> "Intel IPU4P ISYS Capture 8":0 [1]'
