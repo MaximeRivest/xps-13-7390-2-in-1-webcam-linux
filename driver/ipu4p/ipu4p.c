@@ -740,19 +740,60 @@ static int ipu4p_resume(struct device *dev)
 	if (ret)
 		dev_err(&isp->pdev->dev, "IPC reset protocol failed!\n");
 
+	/*
+	 * Firmware authentication needs PSYS powered, but PSYS is a child of
+	 * ISYS, which has not finished resuming yet, so a runtime-PM get here
+	 * fails and the firmware stays unauthenticated after S3 (ISYS then
+	 * fails every stream with "port open ready failed"). Authenticate in
+	 * .complete, which runs once every device has resumed and before
+	 * user space is thawed.
+	 */
+	isp->need_resume_auth = true;
+
+	return 0;
+}
+
+static void ipu4p_complete(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct ipu4p_device *isp = pci_get_drvdata(pdev);
+	int ret;
+
+	if (!isp || !isp->need_resume_auth)
+		return;
+	isp->need_resume_auth = false;
+
 	ret = pm_runtime_resume_and_get(&isp->psys->auxdev.dev);
 	if (ret < 0) {
-		dev_err(&isp->psys->auxdev.dev, "Failed to get runtime PM\n");
-		return 0;
+		dev_err(&isp->psys->auxdev.dev,
+			"Failed to get runtime PM after resume: %d\n", ret);
+		return;
+	}
+
+	/* s2idle usually keeps the IPU powered: nothing to redo. */
+	if (ipu4p_buttress_auth_done(isp)) {
+		dev_dbg(&isp->pdev->dev, "FW still authenticated after resume\n");
+		goto out_put;
+	}
+
+	/* As in probe: the firmware image is mapped through the PSYS MMU. */
+	ret = ipu4p_mmu_hw_init(isp->psys->mmu);
+	if (ret) {
+		dev_err(&isp->pdev->dev, "Failed to set MMU hardware after resume: %d\n",
+			ret);
+		goto out_put;
 	}
 
 	ret = ipu4p_buttress_authenticate(isp);
 	if (ret)
-		dev_err(&isp->pdev->dev, "FW authentication failed(%d)\n", ret);
+		dev_err(&isp->pdev->dev, "FW authentication failed after resume(%d)\n",
+			ret);
+	else
+		dev_info(&isp->pdev->dev, "FW re-authenticated after resume\n");
 
+	ipu4p_mmu_hw_cleanup(isp->psys->mmu);
+out_put:
 	pm_runtime_put(&isp->psys->auxdev.dev);
-
-	return 0;
 }
 
 static int ipu4p_runtime_resume(struct device *dev)
@@ -779,6 +820,7 @@ static int ipu4p_runtime_resume(struct device *dev)
 static const struct dev_pm_ops ipu4p_pm_ops = {
 	SYSTEM_SLEEP_PM_OPS(&ipu4p_suspend, &ipu4p_resume)
 	RUNTIME_PM_OPS(&ipu4p_suspend, &ipu4p_runtime_resume, NULL)
+	.complete = pm_sleep_ptr(ipu4p_complete),
 };
 
 MODULE_DEVICE_TABLE(pci, ipu4p_pci_tbl);

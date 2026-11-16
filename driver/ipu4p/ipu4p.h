@@ -75,6 +75,7 @@ struct ipu4p_device {
 
 	void __iomem *base;
 	bool need_ipc_reset;
+	bool need_resume_auth;	/* system resume: authenticate FW in .complete */
 	bool secure_mode;
 	u8 hw_ver;
 	bool bus_ready_to_probe;
